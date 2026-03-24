@@ -316,10 +316,11 @@
    </div>
 
    <script>
-       // FIXED Password Authentication System - Persistent 30-day session
+       // FIXED Password Authentication System - Persistent 30-day session with resume capability
        const PasswordAuth = {
            SECRET_MAP: { '0': 'P2qR', '1': 'xK9m', '2': 'T5wH', '3': 'L8vN', '4': 'Z3cF', '5': 'Q7bG', '6': 'Y4uJ', '7': 'M6aK', '8': 'R9eD', '9': 'W1sX' },
            STORAGE_KEY: 'footballStatsAuth_v3',
+           EXPIRY_KEY: 'footballStatsExpiry_v3',
            SESSION_DURATION: 30 * 24 * 60 * 60 * 1000, // 30 days
 
            init() {
@@ -339,33 +340,25 @@
 
            checkAuth() {
                const stored = localStorage.getItem(this.STORAGE_KEY);
+               const expiry = localStorage.getItem(this.EXPIRY_KEY);
                const now = Date.now();
                
-               if (!stored) {
-                   // First time user - show password modal
+               if (!stored || !expiry) {
                    this.showModal();
                    return;
                }
                
-               try {
-                   const auth = JSON.parse(stored);
-                   
-                   // Check if 30 days have expired
-                   if (now > auth.expiresAt) {
-                       // Session expired - clear and show password modal
-                       localStorage.removeItem(this.STORAGE_KEY);
-                       this.showModal();
-                   } else {
-                       // Valid session - auto login, hide modal
-                       this.hideModal();
-                       this.showContent();
-                       this.updateCountdown(auth.expiresAt);
-                       this.startCountdown(auth.expiresAt);
-                   }
-               } catch (e) {
-                   // Invalid data - clear and show password modal
+               const expiresAt = parseInt(expiry);
+               
+               if (now > expiresAt) {
                    localStorage.removeItem(this.STORAGE_KEY);
+                   localStorage.removeItem(this.EXPIRY_KEY);
                    this.showModal();
+               } else {
+                   this.hideModal();
+                   this.showContent();
+                   this.updateCountdown(expiresAt);
+                   this.startCountdown(expiresAt);
                }
            },
 
@@ -376,33 +369,24 @@
            authenticate(password) {
                if (this.validatePassword(password)) {
                    const now = Date.now();
-                   const stored = localStorage.getItem(this.STORAGE_KEY);
+                   const existingExpiry = localStorage.getItem(this.EXPIRY_KEY);
                    let expiresAt;
                    
-                   if (stored) {
-                       try {
-                           const auth = JSON.parse(stored);
-                           // If there's a valid existing session, extend from that expiry
-                           // If expired, create new 30-day session
-                           if (auth.expiresAt > now) {
-                               expiresAt = auth.expiresAt;
-                           } else {
-                               expiresAt = now + this.SESSION_DURATION;
-                           }
-                       } catch(e) {
+                   // If there's an existing unexpired session, resume it
+                   if (existingExpiry) {
+                       const existingExpiryTime = parseInt(existingExpiry);
+                       if (existingExpiryTime > now) {
+                           expiresAt = existingExpiryTime;
+                       } else {
                            expiresAt = now + this.SESSION_DURATION;
                        }
                    } else {
-                       // New user - create fresh 30-day session
                        expiresAt = now + this.SESSION_DURATION;
                    }
                    
-                   const authData = { 
-                       loginAt: now, 
-                       expiresAt: expiresAt 
-                   };
+                   localStorage.setItem(this.STORAGE_KEY, 'authenticated');
+                   localStorage.setItem(this.EXPIRY_KEY, expiresAt.toString());
                    
-                   localStorage.setItem(this.STORAGE_KEY, JSON.stringify(authData));
                    this.hideModal();
                    this.showContent();
                    this.updateCountdown(expiresAt);
@@ -415,8 +399,8 @@
            },
 
            logout() {
-               // On logout: Clear the auth data completely
-               // Next login will require password and start fresh 30-day countdown
+               // Don't clear expiry - just remove auth status
+               // This allows session to be resumed if not expired
                localStorage.removeItem(this.STORAGE_KEY);
                location.reload();
            },
@@ -517,7 +501,7 @@
            }
        };
 
-       // History Manager
+       // History Manager - FIXED to save all winning predictions
        const HistoryManager = {
            STORAGE_KEY: 'matchHistory_v4_encrypted',
            init() { this.render(); },
@@ -715,7 +699,7 @@
            return { home: home * 100, draw: draw * 100, away: away * 100, over25: over25 * 100, under25: (1 - over25) * 100, btts: btts * 100 };
        }
 
-       // Main calculation function - HP 60%+ = WIN
+       // FIXED Main calculation function - All winning predictions are now logged
        function calculateSharp() {
            const homeTeam = document.getElementById('homeTeam').value || 'Home';
            const awayTeam = document.getElementById('awayTeam').value || 'Away';
@@ -782,15 +766,42 @@
            const HP_THRESHOLD = 60;
            const winningPredictions = [];
            
-           // Check Home Win
+           // Check ALL markets for high probability wins
+           // Home Win
            if (probs.home >= HP_THRESHOLD && odds.home > 1) {
                const ev = (probs.home * odds.home) - 100;
                winningPredictions.push({ name: 'Home Win', odds: odds.home, result: 'pending', prob: probs.home.toFixed(1), ev: ev.toFixed(1) });
            }
-           // Check Away Win  
+           // Draw
+           if (probs.draw >= HP_THRESHOLD && odds.draw > 1) {
+               const ev = (probs.draw * odds.draw) - 100;
+               winningPredictions.push({ name: 'Draw', odds: odds.draw, result: 'pending', prob: probs.draw.toFixed(1), ev: ev.toFixed(1) });
+           }
+           // Away Win  
            if (probs.away >= HP_THRESHOLD && odds.away > 1) {
                const ev = (probs.away * odds.away) - 100;
                winningPredictions.push({ name: 'Away Win', odds: odds.away, result: 'pending', prob: probs.away.toFixed(1), ev: ev.toFixed(1) });
+           }
+           // Over 2.5
+           if (probs.over25 >= HP_THRESHOLD && odds.over > 1) {
+               const ev = (probs.over25 * odds.over) - 100;
+               winningPredictions.push({ name: 'Over 2.5', odds: odds.over, result: 'pending', prob: probs.over25.toFixed(1), ev: ev.toFixed(1) });
+           }
+           // Under 2.5
+           if (probs.under25 >= HP_THRESHOLD && odds.under > 1) {
+               const ev = (probs.under25 * odds.under) - 100;
+               winningPredictions.push({ name: 'Under 2.5', odds: odds.under, result: 'pending', prob: probs.under25.toFixed(1), ev: ev.toFixed(1) });
+           }
+           // BTTS Yes
+           if (probs.btts >= HP_THRESHOLD && odds.bttsY > 1) {
+               const ev = (probs.btts * odds.bttsY) - 100;
+               winningPredictions.push({ name: 'BTTS Yes', odds: odds.bttsY, result: 'pending', prob: probs.btts.toFixed(1), ev: ev.toFixed(1) });
+           }
+           // BTTS No
+           if ((100 - probs.btts) >= HP_THRESHOLD && odds.bttsN > 1) {
+               const bttsNoProb = 100 - probs.btts;
+               const ev = (bttsNoProb * odds.bttsN) - 100;
+               winningPredictions.push({ name: 'BTTS No', odds: odds.bttsN, result: 'pending', prob: bttsNoProb.toFixed(1), ev: ev.toFixed(1) });
            }
 
            // LOW SCORING MODE
@@ -798,11 +809,7 @@
                document.getElementById('lowScoringAlert').classList.remove('hidden');
                document.getElementById('underOddsDisplay').textContent = odds.under > 1 ? `@${odds.under.toFixed(2)}` : '@--';
                
-               if (odds.under > 1) {
-                   const underEv = (probs.under25 * odds.under) - 100;
-                   winningPredictions.push({ name: 'Under 2.5', odds: odds.under, result: 'pending', prob: probs.under25.toFixed(1), ev: underEv.toFixed(1) });
-               }
-               
+               // Save ALL winning predictions for low-scoring mode
                if (winningPredictions.length > 0) {
                    HistoryManager.saveCalculation(homeTeam, awayTeam, winningPredictions, true);
                }
@@ -811,7 +818,7 @@
                let marketsHtml = '';
                const markets = [
                    { name: 'Home Win', prob: probs.home, odds: odds.home, hp: probs.home >= HP_THRESHOLD },
-                   { name: 'Draw', prob: probs.draw, odds: odds.draw, hp: false },
+                   { name: 'Draw', prob: probs.draw, odds: odds.draw, hp: probs.draw >= HP_THRESHOLD },
                    { name: 'Away Win', prob: probs.away, odds: odds.away, hp: probs.away >= HP_THRESHOLD },
                    { name: 'Over 2.5', prob: probs.over25, odds: odds.over, suppressed: true },
                    { name: 'Under 2.5', prob: probs.under25, odds: odds.under, highlight: true },
@@ -867,6 +874,7 @@
            }
            
            // REGULAR MODE
+           // Save ALL winning predictions for regular mode
            if (winningPredictions.length > 0) {
                HistoryManager.saveCalculation(homeTeam, awayTeam, winningPredictions, false);
            }
@@ -878,25 +886,24 @@
                { name: 'Away Win', prob: probs.away, odds: odds.away },
                { name: 'Over 2.5', prob: probs.over25, odds: odds.over },
                { name: 'Under 2.5', prob: probs.under25, odds: odds.under },
-               { name: 'BTTS Yes', prob: probs.btts, odds: odds.bttsY, isBtts: true },
-               { name: 'BTTS No', prob: 100 - probs.btts, odds: odds.bttsN, isBtts: true }
+               { name: 'BTTS Yes', prob: probs.btts, odds: odds.bttsY },
+               { name: 'BTTS No', prob: 100 - probs.btts, odds: odds.bttsN }
            ];
            
            markets.forEach(m => {
                if (m.odds <= 1) return;
                let badge = '', borderColor = 'border-gray-700';
                const ev = (m.prob * m.odds) - 100;
+               const isHp = m.prob >= HP_THRESHOLD;
                
-               if (m.prob >= HP_THRESHOLD && !m.isBtts) {
+               if (isHp) {
                    badge = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400 border border-green-500/30 ml-2">WIN</span>';
                    borderColor = 'border-green-500';
-               } else if (m.isBtts) {
-                   badge = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 border border-red-500/30 ml-2">AVOID</span>';
                }
                
                marketsHtml += `<div class="p-3 rounded-lg border ${borderColor} bg-gray-800/30">
                    <div class="flex items-center justify-between mb-1"><span class="text-xs text-gray-400">${m.name}</span>${badge}</div>
-                   <div class="text-lg font-bold ${m.prob >= HP_THRESHOLD && !m.isBtts ? 'text-green-400' : 'text-white'}">${m.prob.toFixed(1)}%</div>
+                   <div class="text-lg font-bold ${isHp ? 'text-green-400' : 'text-white'}">${m.prob.toFixed(1)}%</div>
                    <div class="flex items-center justify-between text-xs">
                        <span class="mono text-gray-400">@ ${m.odds.toFixed(2)}</span>
                        <span class="${ev > 0 ? 'text-green-400' : 'text-gray-500'} font-bold">${ev > 0 ? '+' : ''}${ev.toFixed(1)}%</span>
@@ -930,4 +937,5 @@
        });
    </script>
 </body>
-                  </html>
+</html>
+
